@@ -1,15 +1,9 @@
 #!/bin/bash
 
-# Configuration files and variables
 CONFIG_FILE="/etc/fou_tunnel_config"
 SERVICE_FILE="/etc/systemd/system/fou-tunnel.service"
-REMOTE_TUNNEL_IP=""
-REMOTE_TUNNEL_IPV6=""  # Variable to store IPv6 address for IPv4-in-IPv6 tunnel
-
-# Function to display the main menu
-show_menu() {
-    echo -e "\033c"
-    echo -e "\e[1;32m
+echo -e "\033c"
+echo -e "\e[1;32m
  ____  ____  ____  ____  _  ____  ____  _     
 /  _ \/  _ \/ ___\/ ___\/ \/  __\/  _ \/ \  /|
 | / \|| / \||    \|    \| ||  \/|| / \|| |\ ||
@@ -19,156 +13,117 @@ show_menu() {
 TeleGram ID : @TurkAbr
 
 \e[0m"
-    echo "1. Configure Tunnel"
-    echo "2. Check Remote Connection"
-    echo "3. Install bbr.sh and tcp.sh"
-    echo "4. Check Tunnel Status"
-    echo "5. Exit"
-    read -p "Choose an option: " choice
-    case $choice in
-        1) configure_tunnel ;;
-        2) check_remote ;;
-        3) install_scripts ;;
-        4) check_tunnel_status ;;
-        5) exit 0 ;;
-        *) echo "Invalid option" && sleep 1 && show_menu ;;
-    esac
-}
 
-# Function to check remote connection
-check_remote() {
-    if [ -f "$CONFIG_FILE" ]; then
-        source $CONFIG_FILE
-        echo "Checking connection to $REMOTE_IP..."
-        if ping -c 4 $REMOTE_IP &> /dev/null; then
-            echo "Remote IP $REMOTE_IP is reachable."
-        else
-            echo "Remote IP $REMOTE_IP is not reachable."
-        fi
-    else
-        echo "Configuration file not found. Please configure the tunnel first."
-    fi
-    read -p "Press Enter to return to menu..." && show_menu
-}
+if [ ! -f "$CONFIG_FILE" ]; then
+    # آدرس‌های IP دو سرور را وارد کنید
+    read -p "Enter local IP address: " LOCAL_IP
+    read -p "Enter remote IP address: " REMOTE_IP
+    read -p "Enter local tunnel IP (e.g., 10.20.30.*): " LOCAL_TUNNEL_IP
+    read -p "Enter remote tunnel IP (e.g., 10.20.30.*): " REMOTE_TUNNEL_IP
+    read -p "Enter local IPv6 tunnel IP (e.g., 2001:db8::1): " LOCAL_IPV6_TUNNEL_IP
+    read -p "Enter remote IPv6 tunnel IP (e.g., 2001:db8::2): " REMOTE_IPV6_TUNNEL_IP
+    read -p "Enter IPsec PSK: " IPSEC_PSK
 
-# Function to check tunnel status
-check_tunnel_status() {
-    if [ -z "$REMOTE_TUNNEL_IP" ]; then
-        echo "Tunnel IP is not configured."
-        read -p "Press Enter to return to menu..." && show_menu
-        return
-    fi
-    
-    echo "Checking tunnel status to $REMOTE_TUNNEL_IP..."
-    if ping -c 4 $REMOTE_TUNNEL_IP &> /dev/null; then
-        echo "Tunnel to $REMOTE_TUNNEL_IP is established and reachable."
-    else
-        echo "Tunnel to $REMOTE_TUNNEL_IP is not reachable. Re-establishing tunnel..."
-        configure_tunnel  # Call configure_tunnel function to re-establish the tunnel
-    fi
-    read -p "Press Enter to return to menu..." && show_menu
-}
+    # ذخیره IPها در فایل تنظیمات
+    echo "LOCAL_IP=$LOCAL_IP" > $CONFIG_FILE
+    echo "REMOTE_IP=$REMOTE_IP" >> $CONFIG_FILE
+    echo "LOCAL_TUNNEL_IP=$LOCAL_TUNNEL_IP" >> $CONFIG_FILE
+    echo "REMOTE_TUNNEL_IP=$REMOTE_TUNNEL_IP" >> $CONFIG_FILE
+    echo "LOCAL_IPV6_TUNNEL_IP=$LOCAL_IPV6_TUNNEL_IP" >> $CONFIG_FILE
+    echo "REMOTE_IPV6_TUNNEL_IP=$REMOTE_IPV6_TUNNEL_IP" >> $CONFIG_FILE
+    echo "IPSEC_PSK=$IPSEC_PSK" >> $CONFIG_FILE
+else
+    # خواندن IPها از فایل تنظیمات
+    source $CONFIG_FILE
+fi
 
-# Function to install required scripts (bbr.sh and tcp.sh)
-install_scripts() {
-    # Install bbr.sh
-    wget -N --no-check-certificate https://github.com/teddysun/across/raw/master/bbr.sh && chmod +x bbr.sh && bash bbr.sh
+FOU_PORT=5555
 
-    # Install tcp.sh and execute with necessary inputs
-    wget -N --no-check-certificate "https://raw.githubusercontent.com/chiakge/Linux-NetSpeed/master/tcp.sh" && chmod +x tcp.sh
+# ماژول‌های مورد نیاز را بارگذاری کنید
+sudo modprobe fou
+sudo modprobe ip_gre
+sudo modprobe ip6_tunnel
 
-    # Execute tcp.sh script with specific inputs
-    echo -e "10\n" | ./tcp.sh
-    echo "4" | ./tcp.sh
+# حذف رابط‌های شبکه موجود با همان نام قبل از ایجاد آنها
+sudo ip link del gre1 2>/dev/null
+sudo ip link del new-german 2>/dev/null
 
-    read -p "Press Enter to return to menu..." && show_menu
-}
+# ساخت سوکت FOU برای GRE
+sudo ip fou add port $FOU_PORT ipproto gre
 
-# Function to configure the tunnel
-configure_tunnel() {
-    if [ ! -f "$CONFIG_FILE" ]; then
-        read -p "Enter local IP address: " LOCAL_IP
-        read -p "Enter remote IP address: " REMOTE_IP
-        read -p "Enter local tunnel IP (e.g., 30.30.30.2): " LOCAL_TUNNEL_IP
-        read -p "Enter remote tunnel IP (e.g., 30.30.30.1): " REMOTE_TUNNEL_IP
-        read -p "Enter remote IPv6 address for IPv4-in-IPv6 tunnel: " REMOTE_TUNNEL_IPV6
+# ایجاد رابط تونل GRE با بسته‌بندی FOU
+sudo ip link add gre1 type gre key 1 remote $REMOTE_IP local $LOCAL_IP ttl 255 encap fou encap-sport $FOU_PORT encap-dport $FOU_PORT
 
-        echo "LOCAL_IP=$LOCAL_IP" > $CONFIG_FILE
-        echo "REMOTE_IP=$REMOTE_IP" >> $CONFIG_FILE
-        echo "LOCAL_TUNNEL_IP=$LOCAL_TUNNEL_IP" >> $CONFIG_FILE
-        echo "REMOTE_TUNNEL_IP=$REMOTE_TUNNEL_IP" >> $CONFIG_FILE
-        echo "REMOTE_TUNNEL_IPV6=$REMOTE_TUNNEL_IPV6" >> $CONFIG_FILE
+# تخصیص آدرس IP به تونل GRE
+sudo ip addr add $LOCAL_TUNNEL_IP/24 dev gre1
 
-        REMOTE_TUNNEL_IP=$REMOTE_TUNNEL_IP  # Set global variable for tunnel IP
-    else
-        source $CONFIG_FILE
-        REMOTE_TUNNEL_IP=$REMOTE_TUNNEL_IP  # Set global variable for tunnel IP
-    fi
+# فعال کردن رابط GRE
+sudo ip link set gre1 up
 
-    TCP_PORT=443
+# اضافه کردن مسیر برای شبکه از راه دور
+sudo ip route add $REMOTE_TUNNEL_IP/32 dev gre1
 
-    # Install necessary packages if not already installed
-    if ! command -v socat &> /dev/null; then
-        echo "Installing socat..."
-        sudo apt-get update
-        sudo apt-get install -y socat
-	sudo apt-get install -y strongswan strongswan-pki
-    fi
+# ایجاد تونل 4to6 به روش شما
+sudo ip tunnel add new-german mode sit remote $REMOTE_IPV6_TUNNEL_IP local $LOCAL_IPV6_TUNNEL_IP ttl 126
+sudo ip link set dev new-german up mtu 1500
+sudo ip addr add $LOCAL_IPV6_TUNNEL_IP/64 dev new-german
+sudo ip link set new-german mtu 1436
+sudo ip link set new-german up
 
-    # Load necessary kernel modules if not already loaded
-    sudo modprobe ip_gre
+# اجازه ترافیک UDP در پورت 5555 را بدهید
+sudo iptables -A INPUT -p udp --dport $FOU_PORT -j ACCEPT
+sudo iptables -A OUTPUT -p udp --sport $FOU_PORT -j ACCEPT
 
-    sudo ip link del gre1 2>/dev/null
+# نصب strongSwan اگر قبلاً نصب نشده باشد
+if ! command -v ipsec &> /dev/null; then
+    sudo apt-get update
+    sudo apt-get install -y strongswan
+fi
 
-    sudo socat TCP-LISTEN:$TCP_PORT,fork,reuseaddr TUN:gre1,up &
+# تنظیم strongSwan
+echo "config setup
+    charondebug=\"ike 2, knl 2, cfg 2\"
 
-    sudo ip link add gre1 type gre remote $REMOTE_IP local $LOCAL_IP ttl 255
+conn %default
+    keyexchange=ikev2
+    ike=aes256-sha256-modp1024!
+    esp=aes256-sha256!
 
-    sudo ip addr add $LOCAL_TUNNEL_IP/24 dev gre1
+conn ipv6-tunnel
+    left=$LOCAL_IPV6_TUNNEL_IP
+    leftsubnet=$LOCAL_IPV6_TUNNEL_IP/128
+    right=$REMOTE_IPV6_TUNNEL_IP
+    rightsubnet=$REMOTE_IPV6_TUNNEL_IP/128
+    auto=start
+" | sudo tee /etc/ipsec.conf > /dev/null
 
-    sudo ip link set gre1 mtu 1300
+echo ": PSK \"$IPSEC_PSK\"" | sudo tee /etc/ipsec.secrets > /dev/null
 
-    sudo ip link set gre1 up
+# راه‌اندازی IPsec
+sudo systemctl restart strongswan
 
-    sudo ip route add $REMOTE_TUNNEL_IP/32 dev gre1
+echo "FOU tunnel has been configured between $LOCAL_IP and $REMOTE_IP"
+echo "IPv6 tunnel has been configured between $LOCAL_IPV6_TUNNEL_IP and $REMOTE_IPV6_TUNNEL_IP"
+echo "IPsec has been configured and started."
 
-    sudo iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1200
+# ایجاد فایل سرویس systemd
+sudo bash -c "cat > $SERVICE_FILE" << EOL
+[Unit]
+Description=FOU Tunnel Setup
+After=network.target
 
-    sudo iptables -A INPUT -f -j ACCEPT
-    sudo iptables -A OUTPUT -f -j ACCEPT
-    sudo iptables -A FORWARD -f -j ACCEPT
+[Service]
+Type=simple
+ExecStart=/bin/bash $0
+RemainAfterExit=true
 
-    sudo iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+[Install]
+WantedBy=multi-user.target
+EOL
 
-    sudo iptables -A INPUT -p tcp --dport $TCP_PORT -j ACCEPT
-    sudo iptables -A OUTPUT -p tcp --sport $TCP_PORT -j ACCEPT
+# فعال‌سازی سرویس
+sudo systemctl daemon-reload
+sudo systemctl enable fou-tunnel.service
+sudo systemctl start fou-tunnel.service
 
-    echo "TCP tunnel has been configured between $LOCAL_IP and $REMOTE_IP"
-    echo "IPv4-in-IPv6 tunnel configured to $REMOTE_TUNNEL_IPV6"
-
-    # Define a function to handle tunnel reconfiguration and restart
-    restart_tunnel() {
-        sudo systemctl stop fou-tunnel.service
-        sudo ip link del gre1 2>/dev/null
-        sudo ip link add gre1 type gre remote $REMOTE_IP local $LOCAL_IP ttl 255
-        sudo ip addr add $LOCAL_TUNNEL_IP/24 dev gre1
-        sudo ip link set gre1 mtu 1300
-        sudo ip link set gre1 up
-        sudo ip route add $REMOTE_TUNNEL_IP/32 dev gre1
-        sudo systemctl start fou-tunnel.service
-    }
-
-    # Infinite loop to check tunnel status every 20 minutes
-    while true; do
-        if ping -c 4 $REMOTE_TUNNEL_IP &> /dev/null; then
-            echo "Tunnel to $REMOTE_TUNNEL_IP is established and reachable."
-        else
-            echo "Tunnel to $REMOTE_TUNNEL_IP is not reachable. Re-establishing tunnel..."
-            restart_tunnel
-        fi
-        sleep 1200  # 20 minutes
-    done
-}
-
-# Start executing the script by showing the menu
-show_menu
+echo "FOU tunnel service has been created and started."
